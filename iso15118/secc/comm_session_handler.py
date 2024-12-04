@@ -177,7 +177,6 @@ class CommunicationSessionHandler:
     def __init__(
         self, config: Config, codec: IEXICodec, evse_controller: EVSEControllerInterface
     ):
-        self.list_of_tasks: List[Coroutine] = []
         self.udp_server: Optional[UDPServer] = None
         self.tcp_server: Optional[TCPServer] = None
         self.tcp_server_handler: Optional[asyncio.Task[Any]] = None
@@ -215,17 +214,18 @@ class CommunicationSessionHandler:
         constructor.
         """
 
+        list_of_tasks: List[Coroutine] = []
         if start_udp_server:
             self.udp_server = UDPServer(self._rcv_queue, iface)
             udp_ready_event: asyncio.Event = asyncio.Event()
             self.status_event_list.append(udp_ready_event)
-            self.list_of_tasks.append(self.udp_server.start(udp_ready_event))
+            list_of_tasks.append(self.udp_server.start(udp_ready_event))
         else:
             logger.info(f"UDP server disabled on {iface}")
 
         self.tcp_server = TCPServer(self._rcv_queue, iface)
 
-        self.list_of_tasks.extend(
+        list_of_tasks.extend(
             [
                 self.get_from_rcv_queue(self._rcv_queue),
                 self.check_status_task(True),
@@ -234,7 +234,8 @@ class CommunicationSessionHandler:
 
         logger.info("Communication session handler started")
 
-        await wait_for_tasks(self.list_of_tasks)
+        await wait_for_tasks(list_of_tasks)
+        logger.info("Communication session handler stopped")
 
     def check_events(self) -> bool:
         result: bool = True
@@ -280,7 +281,8 @@ class CommunicationSessionHandler:
                     await self.process_incoming_udp_packet(notification)
                 elif isinstance(notification, TCPClientNotification):
                     if self.udp_server:
-                        self.udp_server.pause_udp_server()
+                        # ll9877 comment: stop udp-server not pause
+                        self.udp_server.stop()
                     logger.info(
                         "TCP client connected, client address is "
                         f"{notification.ip_address}."
@@ -326,6 +328,8 @@ class CommunicationSessionHandler:
                         await self.end_current_session(
                             notification.peer_ip_address, notification.stop_action
                         )
+                        # exit this task
+                        return
                     except KeyError:
                         pass
                 else:
@@ -349,7 +353,8 @@ class CommunicationSessionHandler:
         if self._current_peer_ip is None:
             return
         try:
-            self.comm_sessions[self._current_peer_ip][0].reader.feed_eof()
+            # ll9877 comment: fix reader not called
+            self.comm_sessions[self._current_peer_ip[0]][0].reader.feed_eof()
         except Exception as e:
             logger.warning(f"Error while indicating EOF to transport reader: {e}")
 
@@ -371,8 +376,10 @@ class CommunicationSessionHandler:
 
         self.tcp_server_handler = None
         self._current_peer_ip = None
-        if self.udp_server:
-            self.udp_server.resume_udp_server()
+
+# ll9877 comment: do not resume udp server, it is stopped now and will be restarted on next connection
+        # if self.udp_server:
+        #     self.udp_server.resume_udp_server()
 
     async def start_tcp_server(self, with_tls: bool):
         if self.tcp_server_handler:
