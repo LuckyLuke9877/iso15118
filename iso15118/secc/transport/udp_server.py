@@ -78,11 +78,12 @@ class UDPServer(asyncio.DatagramProtocol):
             if not hasattr(socket, "SO_BINDTODEVICE"):
                 socket.SO_BINDTODEVICE = 25
 
-            sock.setsockopt(
-                socket.SOL_SOCKET,
-                socket.SO_BINDTODEVICE,
-                (iface + "\0").encode("ascii"),
-            )
+# ll9877 comment: not needed on linux and creates "operation not permitted" error if not run as sudo.            
+            # sock.setsockopt(
+            #     socket.SOL_SOCKET,
+            #     socket.SO_BINDTODEVICE,
+            #     (iface + "\0").encode("ascii"),
+            # )
             sock.bind(("", SDP_SERVER_PORT))
 
         # After the regular socket is created and bound to a port, it can be
@@ -126,8 +127,13 @@ class UDPServer(asyncio.DatagramProtocol):
             f"and port {SDP_SERVER_PORT}"
         )
         ready_event.set()
-        tasks = [self.rcv_task()]
-        await wait_for_tasks(tasks)
+        # ll9877 comment: enable clean stop, cancel
+        self.receive_task = asyncio.create_task(self.rcv_task())
+        await self.receive_task
+        
+
+    def stop(self):
+        self._transport.close() # results in a connection_lost()
 
     def connection_made(self, transport):
         """
@@ -184,6 +190,9 @@ class UDPServer(asyncio.DatagramProtocol):
         reason = f". Reason: {exc}" if exc else ""
         logger.exception(f"UDP server closed. {reason}")
         self.started = False
+        # ll9877 comment: added for clean stop
+        self.receive_task.cancel()
+
 
     def send(self, message: V2GTPMessage, addr: Tuple[str, int]):
         """
@@ -228,3 +237,7 @@ class UDPServer(asyncio.DatagramProtocol):
             except asyncio.TimeoutError:
                 timeout_notification = ReceiveTimeoutNotification()
                 self._session_handler_queue.put_nowait(timeout_notification)
+            # ll9877 comment: handle cancel()
+            except asyncio.CancelledError:
+                return    
+
