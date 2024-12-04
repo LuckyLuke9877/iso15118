@@ -457,7 +457,8 @@ class SimEVSEController(EVSEControllerInterface):
             # if this is to be inverted. When set, the first parameter set will be for
             # scheduled control mode. This will be removed soon. For testing purposes
             # only.
-            control_modes = [1, 2]
+            # ll9877 comment: set dynamic control mode first, cause it is not as mentioned above
+            control_modes = [2, 1]
 
             for control_mode in control_modes:
                 control_mode_parameter = Parameter(
@@ -919,6 +920,7 @@ class SimEVSEController(EVSEControllerInterface):
         if energy_service == ServiceV20.DC:
             return dc_charge_parameter_discovery_res
         elif energy_service == ServiceV20.DC_BPT:
+            # ll9877 comment: todo => put these params in a config file
             return BPTDCChargeParameterDiscoveryResParams(
                 **(dc_charge_parameter_discovery_res.dict()),
                 evse_max_discharge_power=RationalNumber.get_rational_repr(1000),
