@@ -433,7 +433,7 @@ class SimEVController(EVControllerInterface):
             charge_progress = ChargeProgressV20.STOP
 
         ev_power_schedule_entry = EVPowerScheduleEntry(
-            duration=3600, power=RationalNumber(exponent=0, value=11000)
+            duration=3600, power=RationalNumber(exponent=0, value=-11000)
         )
 
         ev_power_profile_entry_list = EVPowerScheduleEntryList(
@@ -536,8 +536,11 @@ class SimEVController(EVControllerInterface):
             # times specified in config file
             return False
         else:
+            # ll9877 comment: soc should decrement ( negative self.increment ) for discharge
             self.charging_loop_cycles -= 1
             self._soc = min(int(self._soc + self.increment), 100)
+            logger.info(f"Charging state simul: charging_loop_cycles[{self.charging_loop_cycles}], soc[{self._soc}]")
+
             # The line below can just be called once process_message in all states
             # are converted to async calls
             # await asyncio.sleep(0.5)
@@ -712,6 +715,7 @@ class SimEVController(EVControllerInterface):
         self,
     ) -> BPTDynamicDCChargeLoopReqParams:
         """Overrides EVControllerInterface.get_bpt_dynamic_dc_charge_loop_params()."""
+        # ll9877 comment: get realistic values
         dc_dynamic_dc_charge_loop_params_v20 = (
             await self.get_dynamic_dc_charge_loop_params()
         ).dict()
