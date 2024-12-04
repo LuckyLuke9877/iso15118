@@ -182,6 +182,8 @@ class SessionStateMachine(ABC):
         try:
             # First extract the V2GMessage payload from the V2GTPMessage ...
             # and then decode the bytearray into the message
+            logger.debug(f"process_message size={len(message)}")
+            
             v2gtp_msg = V2GTPMessage.from_bytes(self.comm_session.protocol, message)
         except InvalidV2GTPMessageError as exc:
             logger.exception("Incoming TCPPacket is not a valid V2GTPMessage")
@@ -393,12 +395,12 @@ class V2GCommunicationSession(SessionStateMachine):
             terminate_or_pause = SessionStopAction.TERMINATE
 
         logger.info(
-            f"The data link will {terminate_or_pause} in 2 seconds and "
-            "the TCP connection will close in 5 seconds. "
+            f"The data link will {terminate_or_pause} and "
+            "the TCP connection will close. "
         )
         logger.info(f"Reason: {reason}")
 
-        await asyncio.sleep(2)
+
         # Signal data link layer to either terminate or pause the data
         # link connection
         if hasattr(self.comm_session, "evse_controller"):
@@ -408,7 +410,7 @@ class V2GCommunicationSession(SessionStateMachine):
         elif hasattr(self.comm_session, "ev_controller"):
             await self.comm_session.ev_controller.enable_charging(False)
         logger.info(f"{terminate_or_pause}d the data link")
-        await asyncio.sleep(3)
+        
         try:
             self.writer.close()
             await self.writer.wait_closed()
@@ -425,10 +427,11 @@ class V2GCommunicationSession(SessionStateMachine):
         """
 
         # TODO: we may also check for writer exceptions
-        self.writer.write(message.to_bytes())
+        msg = message.to_bytes()
+        self.writer.write(msg)
         await self.writer.drain()
         self.last_message_sent = message
-        logger.info(f"Sent {str(self.current_state.message)}")
+        logger.info(f"Sent {str(self.current_state.message)}, size={len(msg)}bytes")
 
     async def rcv_loop(self, timeout: float):
         """
@@ -445,6 +448,9 @@ class V2GCommunicationSession(SessionStateMachine):
         Args:
             timeout:    The time the EVCC / SECC is waiting for a next message
         """
+        # ll9877 comment: use rec_buffer as received bytes might be chunks of a message ( MTU size 1500 bytes )
+        # this makes also below comment about "the biggest message" obsolete
+        rec_buffer = bytearray()
         while True:
             try:
                 # The biggest message is the Certificate Installation Response,
@@ -489,9 +495,20 @@ class V2GCommunicationSession(SessionStateMachine):
             try:
                 if gc_enabled:
                     gc.disable()
+                
+                # ll9877 comment: Check if the received bytes contain a processable message ( might be chunks )
+                rec_buffer.extend(message)
+                message_len = V2GTPMessage.get_message_length(rec_buffer)
+                if message_len <= 0 or len(rec_buffer) < message_len:
+                    logger.info(f"not full message received, wait for more data. rec_buffer len={len(rec_buffer)}, message len={message_len}")
+                    continue
+
                 # This will create the values needed for the next state, such as
                 # next_state, next_v2gtp_message, next_message_payload_type etc.
-                await self.process_message(message)
+                await self.process_message(bytes(rec_buffer[:message_len]))
+                # remove processed message
+                rec_buffer = rec_buffer[message_len:]
+
                 if self.current_state.next_v2gtp_msg:
                     # next_v2gtp_msg would not be set only if the next state is either
                     # Terminate or Pause on the EVCC side

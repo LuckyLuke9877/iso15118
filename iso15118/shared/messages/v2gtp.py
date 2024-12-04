@@ -87,6 +87,18 @@ class V2GTPMessage:
         # Return -1 to show we're unable to determine the payload length
         return -1
 
+    @staticmethod
+    def get_message_length(message: bytearray) -> int:
+        # message_len = header len + payload len
+        if len(message) < 8:
+            return -1
+        
+        message_len = V2GTPMessage.get_payload_length(bytes(message[:8])) + 8
+        if message_len > 8:
+            return message_len
+        # Return -1 to show we're unable to determine the message length
+        return -1
+
     @classmethod
     def is_payload_type_valid(cls, protocol: Protocol, payload_type: int) -> bool:
         if (
