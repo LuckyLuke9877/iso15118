@@ -149,7 +149,14 @@ class SessionSetup(StateSECC):
 
         # Check session ID. Most likely, we need to create a new one
         session_id: str = get_random_bytes(8).hex().upper()
-        if session_setup_req.header.session_id == bytes(1).hex():
+        # It should be zero, any number of "0", "0000", ...
+        id = -1
+        try:
+            id = int(session_setup_req.header.session_id.strip(), 16)
+        except ValueError:
+            pass
+        
+        if id == 0:
             # A new charging session is established
             self.response_code = ResponseCode.OK_NEW_SESSION_ESTABLISHED
         elif session_setup_req.header.session_id == self.comm_session.session_id:
@@ -254,7 +261,7 @@ class AuthorizationSetup(StateSECC):
         supported_auth_options = []
         if self.comm_session.evse_controller.is_eim_authorized():
             supported_auth_options.append(AuthEnum.EIM)
-        else:
+        elif self.comm_session.config.supported_auth_options:
             supported_auth_options = self.comm_session.config.supported_auth_options
 
         if AuthEnum.PNC in supported_auth_options:
@@ -689,6 +696,7 @@ class ServiceDetail(StateSECC):
             # EnergyTransferServiceList or VASList during ServiceDiscovery.
             response_code = ResponseCode.FAILED_SERVICE_ID_INVALID
             logger.error(f"Service Id is invalid for {message}")
+ 
         service_detail_res = ServiceDetailRes(
             header=MessageHeader(
                 session_id=self.comm_session.session_id, timestamp=time.time()
@@ -812,7 +820,7 @@ class ServiceSelection(StateSECC):
                 "Invalid selected pair of energy transfer service ID "
                 f"'{req_energy_service.service_id}' and parameter set ID "
                 f"'{req_energy_service.parameter_set_id}' (not offered by SECC)",
-                ResponseCode.FAILED_NO_ENERGY_TRANSFER_SERVICE_SELECTED,
+                ResponseCode.FAILED_SERVICE_SELECTION_INVALID,
             )
 
         # Let's check if the (service ID, parameter set ID)-pair of all selected
@@ -848,9 +856,8 @@ class ServiceSelection(StateSECC):
                         # Set the control mode for the comm_session object
                         for param in parameter_set.parameters:
                             if param.name == ParameterName.CONTROL_MODE:
-                                self.comm_session.control_mode = ControlMode(
-                                    param.int_value
-                                )
+                                self.comm_session.control_mode = ControlMode(param.int_value)
+                                break
 
                         break
                 continue
@@ -894,6 +901,7 @@ class ScheduleExchange(StateSECC):
 
     def __init__(self, comm_session: SECCCommunicationSession):
         super().__init__(comm_session, Timeouts.V2G_EVCC_COMMUNICATION_SETUP_TIMEOUT)
+        self.expecting_schedule_exchange_req = True
 
     async def process_message(
         self,
@@ -909,7 +917,7 @@ class ScheduleExchange(StateSECC):
         msg: V2GMessageV20 = self.check_msg_v20(
             message,
             [ScheduleExchangeReq, DCCableCheckReq, PowerDeliveryReq, SessionStopReq],
-            False,
+            self.expecting_schedule_exchange_req,
         )
         if not msg:
             return
@@ -1002,7 +1010,7 @@ class ScheduleExchange(StateSECC):
             Namespace.ISO_V20_COMMON_MSG,
             ISOV20PayloadTypes.MAINSTREAM,
         )
-
+        self.expecting_schedule_exchange_req = False
 
 class PowerDelivery(StateSECC):
     """
@@ -1012,6 +1020,7 @@ class PowerDelivery(StateSECC):
 
     def __init__(self, comm_session: SECCCommunicationSession):
         super().__init__(comm_session, Timeouts.V2G_EVCC_COMMUNICATION_SETUP_TIMEOUT)
+        self.expecting_power_delivery_req = True
 
     async def process_message(
         self,
@@ -1025,7 +1034,9 @@ class PowerDelivery(StateSECC):
         message_exi: bytes = None,
     ):
         msg: V2GMessageV20 = self.check_msg_v20(
-            message, [PowerDeliveryReq, DCWeldingDetectionReq, SessionStopReq], False
+            message, 
+            [PowerDeliveryReq, DCWeldingDetectionReq, SessionStopReq], 
+            self.expecting_power_delivery_req
         )
         if not msg:
             return
@@ -1077,7 +1088,12 @@ class PowerDelivery(StateSECC):
                     ResponseCode.WARN_STANDBY_NOT_ALLOWED,
                 )
                 return
+            elif power_delivery_req.charge_progress == ChargeProgress.SCHEDULE_RENEGOTIATION:
+                logger.warning("Schedule renegotiation received, but is not supported.")
+                response_code = ResponseCode.WARN_SCHEDULE_RENEGOTIATION_FAILED
             elif power_delivery_req.charge_progress == ChargeProgress.STOP:
+                # except DCWeldingDetectionReq after PowerDeliveryReq - Stop
+                self.expecting_power_delivery_req = False
                 # According to section 8.5.6 in ISO 15118-20, the EV is out of the
                 # HLC-C (High Level Controlled Charging) once
                 # PowerDeliveryRes(ResponseCode=OK) is sent with a ChargeProgress=Stop
@@ -1246,16 +1262,20 @@ class SessionStop(StateSECC):
         # [V2G20-1477] : If EVSE supports ServiceRegotiation and EVCC requests
         # it in the SessionStopReq, the next state should be set to ServiceDiscoveryReq
         next_state: Type[State] = Terminate
-        if (
-            session_stop_req.charging_session == ChargingSession.SERVICE_RENEGOTIATION
-            and await evse_controller.service_renegotiation_supported()
-        ):
-            next_state = ServiceDiscovery
-            session_stop_state = SessionStopAction.PAUSE
-        elif session_stop_req.charging_session == ChargingSession.TERMINATE:
-            session_stop_state = SessionStopAction.TERMINATE
-        else:
-            session_stop_state = SessionStopAction.PAUSE
+        response_code = ResponseCode.OK
+        session_stop_state = SessionStopAction.TERMINATE
+        supports_pause_or_renegotiation = await evse_controller.service_renegotiation_supported()
+        if (session_stop_req.charging_session == ChargingSession.SERVICE_RENEGOTIATION):
+            if (supports_pause_or_renegotiation):
+                next_state = ServiceDiscovery
+                session_stop_state = SessionStopAction.PAUSE
+            else:
+                response_code = ResponseCode.FAILED_NO_SERVICE_RENEGOTIATION_SUPPORTED    
+        elif session_stop_req.charging_session == ChargingSession.PAUSE:
+            if (supports_pause_or_renegotiation):
+                session_stop_state = SessionStopAction.PAUSE
+            else:
+                response_code = ResponseCode.FAILED_PAUSE_NOT_ALLOWED    
 
         termination_info = ""
         if (
@@ -1280,7 +1300,7 @@ class SessionStop(StateSECC):
             header=MessageHeader(
                 session_id=self.comm_session.session_id, timestamp=time.time()
             ),
-            response_code=ResponseCode.OK,
+            response_code=response_code,
         )
 
         self.create_next_message(
@@ -1610,6 +1630,7 @@ class DCCableCheck(StateSECC):
             await SessionStop(self.comm_session).process_message(message, message_exi)
             return
 
+        # ll9877 comment: this logic should be moved to evse_controller.run_cable_check() and return just the EVSEProcessing and IsolationLevel
         next_state = None
         processing = EVSEProcessing.ONGOING
 
@@ -1698,10 +1719,14 @@ class DCPreCharge(StateSECC):
     ):
         msg: V2GMessageV20 = self.check_msg_v20(
             message,
-            [DCPreChargeReq, PowerDeliveryReq],
+            [DCPreChargeReq, PowerDeliveryReq, SessionStopReq],
             self.expecting_precharge_req,
         )
         if not msg:
+            return
+
+        if isinstance(msg, SessionStopReq):
+            await SessionStop(self.comm_session).process_message(message, message_exi)
             return
 
         if isinstance(msg, PowerDeliveryReq):
@@ -1756,7 +1781,6 @@ class DCChargeLoop(StateSECC):
 
     def __init__(self, comm_session: SECCCommunicationSession):
         super().__init__(comm_session, Timeouts.V2G_EVCC_COMMUNICATION_SETUP_TIMEOUT)
-        self.expecting_charge_loop_req = True
 
     async def process_message(
         self,
@@ -1769,17 +1793,20 @@ class DCChargeLoop(StateSECC):
         ],
         message_exi: bytes = None,
     ):
+        # ll9877 comment: PowerDeliveryReq-Stop can arrive at any time
         msg: V2GMessageV20 = self.check_msg_v20(
-            message, [DCChargeLoopReq, PowerDeliveryReq], self.expecting_charge_loop_req
+            message, [DCChargeLoopReq, PowerDeliveryReq, SessionStopReq], False
         )
         if not msg:
+            return
+
+        if isinstance(msg, SessionStopReq):
+            await SessionStop(self.comm_session).process_message(message, message_exi)
             return
 
         if isinstance(msg, PowerDeliveryReq):
             await PowerDelivery(self.comm_session).process_message(message, message_exi)
             return
-
-        self.expecting_charge_loop_req = False
 
         selected_energy_service = self.comm_session.selected_energy_service
         control_mode = self.comm_session.control_mode
@@ -1900,7 +1927,6 @@ class DCWeldingDetection(StateSECC):
 
     def __init__(self, comm_session: SECCCommunicationSession):
         super().__init__(comm_session, Timeouts.V2G_EVCC_COMMUNICATION_SETUP_TIMEOUT)
-        self.expecting_welding_detection_req = True
 
     async def process_message(
         self,
@@ -1916,7 +1942,7 @@ class DCWeldingDetection(StateSECC):
         msg: V2GMessageV20 = self.check_msg_v20(
             message,
             [DCWeldingDetectionReq, SessionStopReq],
-            self.expecting_welding_detection_req,
+            False,
         )
         if not msg:
             return
@@ -1925,7 +1951,9 @@ class DCWeldingDetection(StateSECC):
             await SessionStop(self.comm_session).process_message(message, message_exi)
             return
 
-        self.expecting_welding_detection_req = False
+        dc_welding_detection_req: DCWeldingDetectionReq = cast(DCWeldingDetectionReq, msg)
+        next_state = SessionStop if dc_welding_detection_req.ev_processing == Processing.FINISHED else None
+
         welding_detection_res = DCWeldingDetectionRes(
             header=MessageHeader(
                 session_id=self.comm_session.session_id, timestamp=time.time()
@@ -1937,7 +1965,7 @@ class DCWeldingDetection(StateSECC):
         )
 
         self.create_next_message(
-            None,
+            next_state,
             welding_detection_res,
             Timeouts.V2G_SECC_SEQUENCE_TIMEOUT,
             Namespace.ISO_V20_DC,

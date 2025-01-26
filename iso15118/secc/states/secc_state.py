@@ -32,6 +32,7 @@ from iso15118.shared.messages.iso15118_2.datatypes import ResponseCode as Respon
 from iso15118.shared.messages.iso15118_2.msgdef import V2GMessage as V2GMessageV2
 from iso15118.shared.messages.iso15118_20.common_messages import (
     SessionSetupReq as SessionSetupReqV20,
+    SessionStopReq as SessionStopReqV20,
 )
 from iso15118.shared.messages.iso15118_20.common_types import (
     ResponseCode as ResponseCodeV20,
@@ -159,6 +160,10 @@ class StateSECC(State, ABC):
         ],
         expect_first: bool = True,
     ) -> V2GMessageV20:
+        # ll9877 comment: fix SessionStopReq not excepted as it can arrive at any time
+        if isinstance(message, SessionStopReqV20) and SessionStopReqV20 in expected_msg_types:
+            expect_first = False
+
         return self.check_msg(message, V2GMessageV20, expected_msg_types, expect_first)
 
     def check_msg(
@@ -351,7 +356,7 @@ class StateSECC(State, ABC):
         # Here we could have been more specific and check if it is a V2GRequestV20,
         # but to be consistent with the other if clauses and since there is no negative
         # consequences in the behavior of the code, we check if it is a V2GMessageV20
-        elif msg_namespace.startswith(Namespace.ISO_V20_BASE):
+        elif msg_namespace and msg_namespace.startswith(Namespace.ISO_V20_BASE):
             (
                 error_res,
                 namespace,
@@ -367,6 +372,7 @@ class StateSECC(State, ABC):
             self.create_next_message(Terminate, error_res, 0, Namespace.SAP)
         else:
             # Should actually never happen
+            self.create_next_message(Terminate, None, 0, None)
             logger.error(
                 "Something's off here: the faulty_request and response_code "
                 "are not of the expected type"
