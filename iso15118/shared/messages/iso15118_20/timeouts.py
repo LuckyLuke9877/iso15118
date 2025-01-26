@@ -26,7 +26,7 @@ class Timeouts(float, Enum):
     VEHICLE_CHECKIN_REQ = 2
     VEHICLE_CHECKOUT_REQ = 2
     AUTHORIZATION_SETUP_REQ = 2
-    AUTHORIZATION_REQ = 2
+    AUTHORIZATION_REQ = 4
     CERTIFICATE_INSTALLATION_REQ = 5
     SERVICE_DISCOVERY_REQ = 2
     SERVICE_DETAIL_REQ = 5
@@ -44,7 +44,7 @@ class Timeouts(float, Enum):
     # Message specific timings (DC messages)
     DC_CABLE_CHECK_REQ = 2
     DC_PRE_CHARGE_REQ = 2
-    DC_CHARGE_LOOP_REQ = 0.5
+    DC_CHARGE_LOOP_REQ = 1
     DC_WELDING_DETECTION_REQ = 2
     V2G_SECC_SEQUENCE_TIMEOUT_DC_CL = 0.5  # CL = Charge Loop
 

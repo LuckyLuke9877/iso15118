@@ -139,22 +139,22 @@ class EVDCCLLimits(Limits):
 class EVRatedLimits(Limits):
     def __init__(
         self,
-        ac_limits: Optional[EVACCPDLimits] = EVACCPDLimits(),
-        dc_limits: Optional[EVDCCPDLimits] = EVDCCPDLimits(),
+        ac_limits: EVACCPDLimits = None,
+        dc_limits: EVDCCPDLimits = None,
     ):
-        self.ac_limits = ac_limits
-        self.dc_limits = dc_limits
+        self.ac_limits = ac_limits if ac_limits else EVACCPDLimits()
+        self.dc_limits = dc_limits if dc_limits else EVDCCPDLimits()
 
 
 @dataclass
 class EVSessionLimits(Limits):
     def __init__(
         self,
-        ac_limits: Optional[EVACCLLimits] = EVACCLLimits(),
-        dc_limits: Optional[EVDCCLLimits] = EVDCCLLimits(),
+        ac_limits: EVACCLLimits = None,
+        dc_limits: EVDCCLLimits = None,
     ):
-        self.ac_limits = ac_limits
-        self.dc_limits = dc_limits
+        self.ac_limits = ac_limits if ac_limits else EVACCLLimits()
+        self.dc_limits = dc_limits if dc_limits else EVDCCLLimits()
 
 
 class CurrentType(str, Enum):
@@ -167,8 +167,11 @@ class EVDataContext:
     def __init__(
         self,
         evcc_id: Optional[str] = None,
-        rated_limits: Optional[EVRatedLimits] = EVRatedLimits(),
-        session_limits: Optional[EVSessionLimits] = EVSessionLimits(),
+        # ll9877 comment: don't use mutable class as default parameter, it will assign the same object for each instance.
+        # rated_limits: Optional[EVRatedLimits] = EVRatedLimits(),
+        # session_limits: Optional[EVSessionLimits] = EVSessionLimits(),
+        rated_limits: EVRatedLimits = None,
+        session_limits: EVSessionLimits = None,
         departure_time: Optional[int] = None,
         target_energy_request: Optional[float] = None,
         target_soc: Optional[int] = None,
@@ -196,8 +199,8 @@ class EVDataContext:
         target_voltage: float = 0.0,
     ):
         self.evcc_id = evcc_id
-        self.rated_limits = rated_limits
-        self.session_limits = session_limits
+        self.rated_limits = rated_limits if rated_limits else EVRatedLimits()
+        self.session_limits = session_limits if session_limits else EVSessionLimits()
 
         self.current_type: Optional[CurrentType] = None
 
@@ -662,6 +665,11 @@ class EVDataContext:
     ) -> None:
         """Update the EV data context with the
         DCChargeParameterDiscoveryReq parameters"""
+        # validate input
+        if (energy_service == ServiceV20.DC and charge_parameter.dc_params == None) or \
+            (energy_service == ServiceV20.DC_BPT and charge_parameter.bpt_dc_params == None):
+                raise UnknownEnergyService(f"Unknown Service {energy_service} does not match the parameters")
+
         dc_rated_limits = self.rated_limits.dc_limits = EVDCCPDLimits()
         self.session_limits.dc_limits = EVDCCLLimits()
         params: Union[

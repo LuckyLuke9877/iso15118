@@ -715,24 +715,23 @@ class SimEVController(EVControllerInterface):
         self,
     ) -> BPTDynamicDCChargeLoopReqParams:
         """Overrides EVControllerInterface.get_bpt_dynamic_dc_charge_loop_params()."""
-        # ll9877 comment: get realistic values
         dc_dynamic_dc_charge_loop_params_v20 = (
             await self.get_dynamic_dc_charge_loop_params()
         ).dict()
         return BPTDynamicDCChargeLoopReqParams(
             **dc_dynamic_dc_charge_loop_params_v20,
-            ev_max_discharge_power=RationalNumber(exponent=3, value=300),
-            ev_min_discharge_power=RationalNumber(exponent=3, value=300),
-            ev_max_discharge_current=RationalNumber(exponent=3, value=300),
+            ev_max_discharge_power=RationalNumber(exponent=3, value=-11),
+            ev_min_discharge_power=RationalNumber(exponent=0, value=-500),
+            ev_max_discharge_current=RationalNumber(exponent=0, value=-30),
         )
 
     async def get_present_voltage(self) -> RationalNumber:
         """Overrides EVControllerInterface.get_present_voltage()."""
-        return RationalNumber(exponent=3, value=20)
+        return RationalNumber(exponent=0, value=380)
 
     async def get_target_voltage(self) -> RationalNumber:
         """Overrides EVControllerInterface.get_target_voltage()."""
-        return RationalNumber(exponent=3, value=20)
+        return RationalNumber(exponent=0, value=390)
 
     async def enable_charging(self, enabled: bool) -> None:
         """Overrides EVControllerInterface.enable_charging()."""

@@ -660,6 +660,7 @@ class EVSEControllerInterface(ABC):
         """
         return await self.get_dc_charge_parameters()
 
+    # ll9877 comment: why protocol as parameter and not using self._selected_protocol
     async def get_evse_present_voltage(
         self, protocol: Protocol
     ) -> Union[PVEVSEPresentVoltage, RationalNumber]:

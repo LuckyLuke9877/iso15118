@@ -403,8 +403,10 @@ class V2GCommunicationSession(SessionStateMachine):
 
         # Signal data link layer to either terminate or pause the data
         # link connection
+        # ll9877 comment: basically all hasattr() should be an abstractmethod on_stop()
         if hasattr(self.comm_session, "evse_controller"):
             evse_controller = self.comm_session.evse_controller
+            await evse_controller.stop_charger()
             await evse_controller.update_data_link(terminate_or_pause)
             await evse_controller.session_ended(str(self.current_state), reason)
         elif hasattr(self.comm_session, "ev_controller"):

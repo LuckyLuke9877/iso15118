@@ -79,7 +79,7 @@ class SECCCommunicationSession(V2GCommunicationSession):
         config: Config,
         evse_controller: EVSEControllerInterface,
         evse_id: str,
-        ev_session_context: Optional[EVSessionContext15118] = None,
+        ev_session_context: EVSessionContext15118 = None,
     ):
         # Need to import here to avoid a circular import error
         # pylint: disable=import-outside-toplevel
@@ -95,9 +95,7 @@ class SECCCommunicationSession(V2GCommunicationSession):
         # EVSE ID associated with this session
         self.evse_id = evse_id
         # EV Session context associated if available.
-        self.ev_session_context: EVSessionContext15118 = (
-            ev_session_context or EVSessionContext15118()
-        )
+        self.ev_session_context = ev_session_context if ev_session_context else EVSessionContext15118()
         # The authorization option(s) offered with ServiceDiscoveryRes in
         # ISO 15118-2 and with AuthorizationSetupRes in ISO 15118-20
         self.offered_auth_options: Optional[List[AuthEnum]] = []

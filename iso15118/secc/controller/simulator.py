@@ -545,21 +545,22 @@ class SimEVSEController(EVSEControllerInterface):
 
         current_protocol = self.get_selected_protocol()
         if current_protocol == Protocol.ISO_15118_20_DC:
-            service_ids = [2, 6]
+            service_ids = [2, 6] # ll9877 comment: should be only 6 for BPT
         elif current_protocol == Protocol.ISO_15118_20_AC:
             service_ids = [1, 5]
 
         service_list: ServiceList = ServiceList(services=[])
         for service_id in service_ids:
             service_list.services.append(
-                Service(service_id=service_id, free_service=False)
+                Service(service_id=service_id, free_service=True)
             )
 
         return service_list
 
     def is_eim_authorized(self) -> bool:
         """Overrides EVSEControllerInterface.is_eim_authorized()."""
-        return False
+        # ll9877 comment: is already external identified
+        return True
 
     async def is_authorized(
         self,
