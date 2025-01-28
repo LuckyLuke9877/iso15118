@@ -108,7 +108,7 @@ class Config:
         self.env_dump = dict(env.dump())
         self.env_dump.update(shared_settings)
 
-    def print_settings(self):
+    def print_settings(self) -> None:
         logger.info("SECC settings:")
         for key, value in self.env_dump.items():
             logger.info(f"{key:30}: {value}")

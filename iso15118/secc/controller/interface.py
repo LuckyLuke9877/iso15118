@@ -100,13 +100,13 @@ class ServiceStatus(str, Enum):
 
 
 class EVSEControllerInterface(ABC):
-    def __init__(self):
+    def __init__(self) -> None:
         self.ev_data_context = EVDataContext()
         self.evse_data_context = EVSEDataContext()
 
         self._selected_protocol: Optional[Protocol] = None
 
-    def reset_ev_data_context(self):
+    def reset_ev_data_context(self) -> None:
         self.ev_data_context = EVDataContext()
 
     def get_ev_data_context(self) -> EVDataContext:

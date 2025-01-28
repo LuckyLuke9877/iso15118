@@ -9,18 +9,19 @@ from iso15118.shared.settings import JAR_FILE_PATH
 logger = logging.getLogger(__name__)
 
 
+
 # exi_codec singleton
 __exi_codec = None
 __init_thread = None
 
 # call this at the start of application, cause it takes a while to init
 # note: should be called once only and is not thread safe
-def init_exi_codec():
+def init_exi_codec() -> None:
     global __init_thread
     if __init_thread :
         return
     
-    def init():
+    def init() -> None:
         global __exi_codec
         __exi_codec = ExificientEXICodec()
         logger.info("ExificientEXICodec is initialized.")
@@ -28,14 +29,14 @@ def init_exi_codec():
     __init_thread = threading.Thread(target=init)
     __init_thread.start()
 
-def get_exi_codec():
+def get_exi_codec() -> 'ExificientEXICodec':
     global __init_thread
     __init_thread.join()
     global __exi_codec
     return __exi_codec
 
 
-def compare_messages(json_to_encode, decoded_json):
+def compare_messages(json_to_encode, decoded_json) -> bool:
     json_obj = json.loads(json_to_encode)
     decoded_json_obj = json.loads(decoded_json)
     return sorted(json_obj.items()) == sorted(decoded_json_obj.items())
