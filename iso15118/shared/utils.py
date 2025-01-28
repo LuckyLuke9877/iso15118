@@ -80,7 +80,7 @@ def load_requested_auth_modes(read_auth_modes: Optional[List[str]]) -> List[Auth
     return [AuthEnum[x] for x in valid_auth_options]
 
 
-async def cancel_task(task):
+async def cancel_task(task) -> None:
     """Cancel the task safely"""
     task.cancel()
     try:
@@ -91,7 +91,7 @@ async def cancel_task(task):
 
 async def wait_for_tasks(
     await_tasks: List[Coroutine], return_when=asyncio.FIRST_EXCEPTION
-):
+) -> None:
     """
     Method to run multiple tasks concurrently.
     return_when is used directly in the asyncio.wait call and sets the

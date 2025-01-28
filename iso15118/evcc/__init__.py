@@ -25,7 +25,7 @@ class EVCCHandler(CommunicationSessionHandler):
             self, evcc_config, iface, exi_codec, ev_controller
         )
 
-    async def start(self):
+    async def start(self) -> None:
         try:
             logger.info(f"Starting 15118 version: {__version__}")
             await self.start_session_handler()

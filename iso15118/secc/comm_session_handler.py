@@ -204,7 +204,7 @@ class CommunicationSessionHandler:
 
     async def start_session_handler(
         self, iface: str, start_udp_server: Optional[bool] = True
-    ):
+    ) -> None:
         """
         This method is necessary, because python does not allow
         async def __init__.
@@ -257,7 +257,7 @@ class CommunicationSessionHandler:
             logger.error("Timeout: Servers failed to startup")
             await self.evse_controller.set_status(ServiceStatus.ERROR)
 
-    async def get_from_rcv_queue(self, queue: asyncio.Queue):
+    async def get_from_rcv_queue(self, queue: asyncio.Queue) -> None:
         """
         Waits for an incoming message from the transport layer
         (e.g. UDP or TCP message) or a notification from an ongoing
@@ -340,7 +340,7 @@ class CommunicationSessionHandler:
             finally:
                 queue.task_done()
 
-    def close_session(self):
+    def close_session(self) -> None:
         """
         Use this method to prevent the SECC from waiting until SECC timeout is hit to
         terminate (For example when State A/E/F has been signalled).
@@ -358,7 +358,7 @@ class CommunicationSessionHandler:
 
     async def end_current_session(
         self, peer_ip_address: Any, session_stop_action: SessionStopAction
-    ):
+    ) -> None:
         try:
             await cancel_task(self.tcp_server_handler)
             await cancel_task(self.comm_sessions[peer_ip_address[0]][1])
@@ -379,7 +379,7 @@ class CommunicationSessionHandler:
         # if self.udp_server:
         #     self.udp_server.resume_udp_server()
 
-    async def start_tcp_server(self, with_tls: bool):
+    async def start_tcp_server(self, with_tls: bool) -> None:
         if self.tcp_server_handler:
             logger.info("Reset current tcp handler.")
             try:

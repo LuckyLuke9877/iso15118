@@ -166,6 +166,9 @@ class EXI:
     """
 
     _instance = None
+    
+    def __init__(self) -> None:
+        pass
 
     def __new__(cls):
         if cls._instance is None:
