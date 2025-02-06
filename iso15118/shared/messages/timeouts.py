@@ -8,7 +8,7 @@ class Timeouts(float, Enum):
     Given in seconds
     """
 
-    SDP_REQ = 0.25
+    SDP_REQ = 0.5
     SUPPORTED_APP_PROTOCOL_REQ = 2.0
     V2G_EVCC_COMMUNICATION_SETUP_TIMEOUT = 20.0
     V2G_SECC_SEQUENCE_TIMEOUT = 60

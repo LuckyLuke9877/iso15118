@@ -212,16 +212,14 @@ class CommunicationSessionHandler:
         constructor.
         """
 
+        self.tcp_server = TCPServer(self._rcv_queue, iface)
+
         list_of_tasks: List[Coroutine] = []
         if start_udp_server:
             self.udp_server = UDPServer(self._rcv_queue, iface)
-            udp_ready_event: asyncio.Event = asyncio.Event()
-            self.status_event_list.append(udp_ready_event)
-            list_of_tasks.append(self.udp_server.start(udp_ready_event))
+            list_of_tasks.append(self.udp_server.start())
         else:
             logger.info(f"UDP server disabled on {iface}")
-
-        self.tcp_server = TCPServer(self._rcv_queue, iface)
 
         list_of_tasks.extend(
             [
@@ -231,7 +229,6 @@ class CommunicationSessionHandler:
         )
 
         logger.info("Communication session handler started")
-
         await wait_for_tasks(list_of_tasks)
         logger.info("Communication session handler stopped")
 

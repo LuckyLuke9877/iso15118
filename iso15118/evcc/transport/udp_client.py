@@ -32,7 +32,7 @@ class UDPClient(DatagramProtocol):
     https://docs.python.org/3/library/asyncio-protocol.html
     """
 
-    def __init__(self, session_handler_queue: asyncio.Queue, iface: str):
+    def __init__(self, session_handler_queue: asyncio.Queue, iface: str) -> None:
         self._session_handler_queue: asyncio.Queue = session_handler_queue
         # Indication whether or not the UDP client connection is open or closed
         self.started: bool = False
@@ -69,7 +69,7 @@ class UDPClient(DatagramProtocol):
 
         return sock
 
-    async def start(self):
+    async def start(self) -> None:
         """
         Starts the UDP client service
 
@@ -82,7 +82,7 @@ class UDPClient(DatagramProtocol):
             sock=self._create_socket(self.iface),
         )
 
-    def connection_made(self, transport):
+    def connection_made(self, transport) -> None:
         """
         Callback of the lower level API, which is called when the connection to
         the socket succeeds
@@ -90,7 +90,7 @@ class UDPClient(DatagramProtocol):
         logger.debug("UDP client socket ready")
         self.started = True
 
-    def datagram_received(self, data: bytes, addr: Tuple[str, int]):
+    def datagram_received(self, data: bytes, addr: Tuple[str, int]) -> None:
         """
         Callback from asyncio.DatagramProtocol (which receives all packets)
         when a UDP server sent data.
@@ -109,15 +109,15 @@ class UDPClient(DatagramProtocol):
         except asyncio.QueueFull:
             logger.error(f"Dropped packet size {len(data)} from {addr}")
 
-    def error_received(self, exc):
+    def error_received(self, exc) -> None:
         logger.exception(f"Error received: {exc}")
         self.started = False
 
-    def connection_lost(self, exc):
+    def connection_lost(self, exc) -> None:
         logger.exception(f"Client closed: {exc}")
         self.started = False
 
-    def send(self, message: V2GTPMessage):
+    def send(self, message: V2GTPMessage) -> None:
         """
         This method will send the payload over the udp socket and right after
         will spawn a task in the event loop, awaiting for a specified time
@@ -169,7 +169,7 @@ class UDPClient(DatagramProtocol):
 
         logger.debug(f"Message sent: {message}")
 
-    async def receive(self):
+    async def receive(self) -> None:
         try:
             udp_packet, _ = await asyncio.wait_for(
                 self._rcv_queue.get(), timeout=Timeouts.SDP_REQ
@@ -183,6 +183,6 @@ class UDPClient(DatagramProtocol):
             )
             self._session_handler_queue.put_nowait(ReceiveTimeoutNotification())
 
-    async def send_and_receive(self, message: V2GTPMessage):
+    async def send_and_receive(self, message: V2GTPMessage) -> None:
         self.send(message)
         await self.receive()

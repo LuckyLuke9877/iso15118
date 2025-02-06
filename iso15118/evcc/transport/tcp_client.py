@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import socket
+from asyncio.streams import StreamReader, StreamWriter
 from ipaddress import IPv6Address
 
 from iso15118.shared.security import get_ssl_context
@@ -14,8 +15,8 @@ class TCPClient(asyncio.Protocol):
     # pylint: disable=too-many-instance-attributes
     def __init__(self, session_handler_queue, port, is_tls):
         self._closed = False
-        self.reader = None
-        self.writer = None
+        self.reader: StreamReader
+        self.writer: StreamWriter
         self.port = port
         self._session_handler_queue = session_handler_queue
         self._rcv_queue: asyncio.Queue = asyncio.Queue()

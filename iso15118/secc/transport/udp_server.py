@@ -108,7 +108,7 @@ class UDPServer(asyncio.DatagramProtocol):
 
         return sock
 
-    async def start(self, ready_event: asyncio.Event):
+    async def start(self) -> None:
         """UDP server tasks to start"""
         # Get a reference to the event loop as we plan to use a low-level API
         # (see loop.create_datagram_endpoint())
@@ -126,11 +126,6 @@ class UDPServer(asyncio.DatagramProtocol):
             f"{SDP_MULTICAST_GROUP}%{self.iface} "
             f"and port {SDP_SERVER_PORT}"
         )
-        ready_event.set()
-        # ll9877 comment: enable clean stop, cancel
-        self.receive_task = asyncio.create_task(self.rcv_task())
-        await self.receive_task
-        
 
     def stop(self):
         self._transport.close() # results in a connection_lost()
@@ -164,7 +159,7 @@ class UDPServer(asyncio.DatagramProtocol):
         logger.debug(f"Message received from {addr}: {data.hex()}")
         try:
             udp_packet = UDPPacketNotification(bytearray(data), addr)
-            self._rcv_queue.put_nowait((udp_packet, addr))
+            self._session_handler_queue.put_nowait(udp_packet)
         except asyncio.QueueFull:
             logger.error(f"Dropped packet size {len(data)} from {addr}")
 
@@ -190,8 +185,6 @@ class UDPServer(asyncio.DatagramProtocol):
         reason = f". Reason: {exc}" if exc else ""
         logger.exception(f"UDP server closed. {reason}")
         self.started = False
-        # ll9877 comment: added for clean stop
-        self.receive_task.cancel()
 
 
     def send(self, message: V2GTPMessage, addr: Tuple[str, int]):
@@ -217,27 +210,4 @@ class UDPServer(asyncio.DatagramProtocol):
         """
         logger.info("UDP server has been resumed.")
         self.pause_server = False
-
-    async def rcv_task(self, timeout: int = None):
-        """
-        This receive task is waiting for a specified time for an answer to the
-        last message sent via UDP. Once a message is received, it is relayed to
-        communication session handler queue.
-
-        If no answer arrives on time in the rcv queue, an exception is thrown
-        and a ReceiveTimeoutNotification is sent to the communication session
-        layer.
-        """
-        while True:
-            try:
-                udp_packet, _ = await asyncio.wait_for(
-                    self._rcv_queue.get(), timeout=timeout
-                )
-                self._session_handler_queue.put_nowait(udp_packet)
-            except asyncio.TimeoutError:
-                timeout_notification = ReceiveTimeoutNotification()
-                self._session_handler_queue.put_nowait(timeout_notification)
-            # ll9877 comment: handle cancel()
-            except asyncio.CancelledError:
-                return    
 
