@@ -372,13 +372,14 @@ class V2GCommunicationSession(SessionStateMachine):
             evse_controller = self.comm_session.evse_controller
             await evse_controller.set_present_protocol_state(state)
 
-    async def stop(self, reason: str):
+    async def stop(self, reason: str, graceful: bool = True):
         """
         Closes the TCP connection after 5 seconds and terminates or pauses the
         data link for this V2GCommunicationSession object after 2 seconds to
         make sure any message that needs to be sent can still go through.
         TODO check if that really makes sense of if TCP should be terminated
              after 2 s and the data link after 5 s
+        # ll9877 comment: removed the sleeps => not needed.
 
         Especially necessary for the SECC, which needs to send a response with
         a FAILED response code or a SessionStopRes with response code "OK"
@@ -414,6 +415,9 @@ class V2GCommunicationSession(SessionStateMachine):
         logger.info(f"{terminate_or_pause}d the data link")
         
         try:
+            # fixes error on cable unplug / disconnect: asyncio SSL: APPLICATION_DATA_AFTER_CLOSE_NOTIFY
+            if not graceful:
+                self.writer.transport.abort()
             self.writer.close()
             await self.writer.wait_closed()
         except (asyncio.TimeoutError, ConnectionResetError) as exc:
@@ -461,14 +465,9 @@ class V2GCommunicationSession(SessionStateMachine):
                 message = await asyncio.wait_for(self.reader.read(7000), timeout)
                 if message == b"" and self.reader.at_eof():
                     stop_reason: str = "TCP peer closed connection"
-                    await self.stop(reason=stop_reason)
-                    self.session_handler_queue.put_nowait(
-                        StopNotification(
-                            False,
-                            stop_reason,
-                            self.peer_name,
-                        )
-                    )
+                    self.stop_reason = StopNotification(False, stop_reason, self.peer_name)
+                    await self.stop(reason=stop_reason, graceful=False)
+                    self.session_handler_queue.put_nowait(self.stop_reason)
                     return
             except (asyncio.TimeoutError, ConnectionResetError) as exc:
                 if type(exc) is asyncio.TimeoutError:

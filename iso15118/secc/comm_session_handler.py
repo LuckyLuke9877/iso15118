@@ -159,10 +159,6 @@ class SECCCommunicationSession(V2GCommunicationSession):
         _, writer = transport
         return True if writer.get_extra_info("sslcontext") else False
 
-    async def stop(self, reason: str):
-        await self.evse_controller.stop_charger()
-        await super().stop(reason)
-
 
 class CommunicationSessionHandler:
     """
@@ -337,7 +333,7 @@ class CommunicationSessionHandler:
             finally:
                 queue.task_done()
 
-    def close_session(self) -> None:
+    def close_session(self) -> bool:
         """
         Use this method to prevent the SECC from waiting until SECC timeout is hit to
         terminate (For example when State A/E/F has been signalled).
@@ -346,12 +342,13 @@ class CommunicationSessionHandler:
          and push StopNotification() which will eventually end the session.
         """
         if self._current_peer_ip is None:
-            return
+            return False
         try:
-            # ll9877 comment: fix reader not called
             self.comm_sessions[self._current_peer_ip[0]][0].reader.feed_eof()
         except Exception as e:
             logger.warning(f"Error while indicating EOF to transport reader: {e}")
+            return False
+        return True
 
     async def end_current_session(
         self, peer_ip_address: Any, session_stop_action: SessionStopAction
