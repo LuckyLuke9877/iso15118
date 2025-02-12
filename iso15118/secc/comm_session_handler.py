@@ -316,9 +316,10 @@ class CommunicationSessionHandler:
                     self._current_peer_ip = notification.ip_address
                 elif isinstance(notification, StopNotification):
                     try:
-                        await self.end_current_session(
-                            notification.peer_ip_address, notification.stop_action
-                        )
+                        if notification.peer_ip_address:
+                            await self.end_current_session(
+                                notification.peer_ip_address, notification.stop_action
+                            )
                         # exit this task
                         return
                     except KeyError:
@@ -341,7 +342,13 @@ class CommunicationSessionHandler:
         peer has closed the connection. This would in turn cause a ConnectionResetError
          and push StopNotification() which will eventually end the session.
         """
+        if self.udp_server:
+            self.udp_server.stop()
+
         if self._current_peer_ip is None:
+            # session has not started yet, but still need to stop "get_from_rcv_queue()"
+            stop_reason = StopNotification(False, "session aborted")
+            self._rcv_queue.put_nowait(stop_reason)
             return False
         try:
             self.comm_sessions[self._current_peer_ip[0]][0].reader.feed_eof()

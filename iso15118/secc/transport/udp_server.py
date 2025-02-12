@@ -59,9 +59,8 @@ class UDPServer(asyncio.DatagramProtocol):
         # Socket type (datagram, determines transport layer protocol UDP)
         sock = socket.socket(family=socket.AF_INET6, type=socket.SOCK_DGRAM)
 
-        # Block binding to this socket+interface combination from now.
-        # Ref: https://www.man7.org/linux/man-pages/man7/socket.7.html
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
+        # Reuse address, otherwise pytests will fail.
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
         # Bind the socket to the predefined port on specified interface for receiving
         # UDP packets (SDP requests). This is done differently on Mac and Linux.
@@ -127,8 +126,9 @@ class UDPServer(asyncio.DatagramProtocol):
             f"and port {SDP_SERVER_PORT}"
         )
 
-    def stop(self):
-        self._transport.close() # results in a connection_lost()
+    def stop(self) -> None:
+        # results in a connection_lost()
+        self._transport.close()
 
     def connection_made(self, transport):
         """
@@ -182,8 +182,12 @@ class UDPServer(asyncio.DatagramProtocol):
             EOF is received, or the connection was aborted or closed by this
             side of the connection.
         """
-        reason = f". Reason: {exc}" if exc else ""
-        logger.exception(f"UDP server closed. {reason}")
+        if exc:
+            reason = f". Reason: {exc}" if exc else ""
+            logger.exception(f"UDP server closed. {reason}")
+        else:
+            logger.info("UDP server closed.")
+
         self.started = False
 
 
