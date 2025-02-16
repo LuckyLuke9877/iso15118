@@ -13,7 +13,6 @@ from asyncio.streams import StreamReader, StreamWriter
 from typing import List, Optional, Tuple, Type, Union
 
 from pydantic import ValidationError
-from typing_extensions import TYPE_CHECKING
 
 from iso15118.shared.exceptions import (
     EXIDecodingError,
@@ -51,26 +50,13 @@ from iso15118.shared.messages.iso15118_20.common_types import (
 )
 from iso15118.shared.messages.v2gtp import V2GTPMessage
 from iso15118.shared.notifications import StopNotification
-from iso15118.shared.states import Pause, State, Terminate
+from iso15118.shared.states import Pause, State, Terminate, Session
 from iso15118.shared.utils import wait_for_tasks
 
 logger = logging.getLogger(__name__)
 
-if TYPE_CHECKING:
-    # EVCCCommunicationSession and SECCCommunicationSession are used for
-    # annotation purposes only, as a type hint for the comm_session class
-    # attribute. But comm_session also imports State. To avoid a circular import
-    # error, one can use the TYPE_CHECKING boolean from typing, which evaluates
-    # to True during mypy or other 3rd party type checker but assumes the value
-    # 'False' during runtime.
-    # Please check:
-    # https://stackoverflow.com/questions/61545580/how-does-mypy-use-typing-type-checking-to-resolve-the-circular-import-annotation
-    # https://docs.python.org/3/library/typing.html#typing.TYPE_CHECKING
-    from iso15118.evcc.comm_session_handler import EVCCCommunicationSession
-    from iso15118.secc.comm_session_handler import SECCCommunicationSession
 
-
-class SessionStateMachine(ABC):
+class SessionStateMachine(Session):
     """
     Each newly established TCP session initiates a communication session, which
     is essentially the sate machine for the ISO 15118 message handling.
@@ -79,7 +65,6 @@ class SessionStateMachine(ABC):
     def __init__(
         self,
         start_state: Type[State],
-        comm_session: Union["EVCCCommunicationSession", "SECCCommunicationSession"],
     ):
         """
         The EVCC state machine starts with waiting for the
@@ -95,26 +80,24 @@ class SessionStateMachine(ABC):
 
         Args:
             start_state: The state that initialises the state machine
-            comm_session:   The V2GCommunicationSession object of either the
-                            the EVCC or SECC. Needed to access certain session
-                            variables, as certain states need to read
-                            and store session relevant information, depending on
-                            the message.
-
-                            For example: the SupportedAppProtocolReq message
-                            contains information about the EVCC's supported
-                            protocol, which is relevant information needed
-                            throughout the session.
         """
         self.start_state = start_state
-        self.comm_session = comm_session
-        self.current_state = start_state(comm_session)
+        self._current_state = start_state(self)
         self.v20_payload_type_to_namespace = {
             ISOV20PayloadTypes.AC_MAINSTREAM: Namespace.ISO_V20_AC,
             ISOV20PayloadTypes.DC_MAINSTREAM: Namespace.ISO_V20_DC,
             ISOV20PayloadTypes.ACDP_MAINSTREAM: Namespace.ISO_V20_ACDP,
             ISOV20PayloadTypes.WPT_MAINSTREAM: Namespace.ISO_V20_WPT,
         }
+
+    # Session abstractmethods impl
+    @property
+    def current_state(self) -> State:
+        return self._current_state
+
+    @current_state.setter
+    def current_state(self, state: State) -> None:
+        self._current_state = state
 
     def get_exi_ns(
         self,
@@ -132,20 +115,20 @@ class SessionStateMachine(ABC):
         energy mode specific and, thus, we need the specific schema where these
         messages are defined.
         """
-        if self.comm_session.protocol == Protocol.UNKNOWN:
+        if self.protocol == Protocol.UNKNOWN:
             return Namespace.SAP
-        elif self.comm_session.protocol == Protocol.ISO_15118_2:
+        elif self.protocol == Protocol.ISO_15118_2:
             return Namespace.ISO_V2_MSG_DEF
-        elif self.comm_session.protocol == Protocol.DIN_SPEC_70121:
+        elif self.protocol == Protocol.DIN_SPEC_70121:
             return Namespace.DIN_MSG_DEF
-        elif self.comm_session.protocol.ns.startswith(Namespace.ISO_V20_BASE):
+        elif self.protocol.ns.startswith(Namespace.ISO_V20_BASE):
             if isinstance(payload_type, ISOV20PayloadTypes):
                 return self.v20_payload_type_to_namespace.get(
                     payload_type, Namespace.ISO_V20_COMMON_MSG
                 )
         return Namespace.ISO_V20_COMMON_MSG
 
-    async def process_message(self, message: bytes):
+    async def process_message(self, message: bytes) -> None:
         """
         The following steps are conducted in this state machine's general
         process_message() function:
@@ -184,7 +167,7 @@ class SessionStateMachine(ABC):
             # and then decode the bytearray into the message
             logger.debug(f"process_message size={len(message)}")
             
-            v2gtp_msg = V2GTPMessage.from_bytes(self.comm_session.protocol, message)
+            v2gtp_msg = V2GTPMessage.from_bytes(self.protocol, message)
         except InvalidV2GTPMessageError as exc:
             logger.exception("Incoming TCPPacket is not a valid V2GTPMessage")
             raise exc
@@ -202,14 +185,6 @@ class SessionStateMachine(ABC):
             decoded_message = EXI().from_exi(
                 v2gtp_msg.payload, self.get_exi_ns(v2gtp_msg.payload_type)
             )
-
-            if hasattr(self.comm_session, "evse_id"):
-                logger.trace(  # type: ignore[attr-defined]
-                    f"{self.comm_session.evse_id}:::"
-                    f"{v2gtp_msg.payload.hex()}:::"
-                    f"{self.get_exi_ns(v2gtp_msg.payload_type).value}"
-                )
-
         except V2GMessageValidationError as exc:
             logger.error(
                 f"EXI message (ns={self.get_exi_ns(v2gtp_msg.payload_type)}) "
@@ -261,7 +236,7 @@ class SessionStateMachine(ABC):
                 "next state is not Terminate"
             )
 
-    def go_to_next_state(self):
+    def go_to_next_state(self) -> None:
         """
         This method assures that the communication session's current state is
         always up-to-date, which is something other parts of the code rely on.
@@ -272,11 +247,11 @@ class SessionStateMachine(ABC):
         based on the next incoming message.
         """
         if self.current_state.next_state:
-            self.current_state.next_state(self.comm_session)
+            self.current_state.next_state(self)
 
-    def resume(self):
+    def resume(self) -> None:
         logger.debug("Trying to resume communication session")
-        self.current_state = self.start_state(self.comm_session)
+        self.current_state = self.start_state(self)
 
 
 class V2GCommunicationSession(SessionStateMachine):
@@ -293,7 +268,6 @@ class V2GCommunicationSession(SessionStateMachine):
         transport: Tuple[StreamReader, StreamWriter],
         start_state: Type["State"],
         session_handler_queue: asyncio.Queue,
-        comm_session: Union["EVCCCommunicationSession", "SECCCommunicationSession"],
     ):
         """
         Initialise the communication session with EVCC or SECC specific
@@ -306,17 +280,15 @@ class V2GCommunicationSession(SessionStateMachine):
             session_handler_queue:  The asyncio.Queue object used for pushing
                                     timeout, termination, and pausing
                                     notifications to the session handler
-            is_tls: Whether or not this TCP communication session is cryptographically
-                    secured with TLS
-            comm_session: The instance of EVCCCommunicationSession or
-                          SECCCommunicationSession
         """
-        self.protocol: Protocol = Protocol.UNKNOWN
+        super().__init__(start_state)
+
+        self._protocol: Protocol = Protocol.UNKNOWN
         self.reader, self.writer = transport
         # For timeout, termination, and pausing notifications
         self.session_handler_queue = session_handler_queue
         self.peer_name = self.writer.get_extra_info("peername")
-        self.session_id: str = ""
+        self._session_id: str = ""
         # Mutually agreed-upon ISO 15118 application protocol as result of SAP
         self.chosen_protocol: str = ""
         # Whether the SECC supports service renegotiation (ISO 15118-20)
@@ -339,14 +311,40 @@ class V2GCommunicationSession(SessionStateMachine):
         self.control_mode: Optional[ControlMode] = None
         # Contains info whether the communication session is stopped successfully (True)
         # or due to a failure (False), plus additional info regarding the reason behind.
-        self.stop_reason: Optional[StopNotification] = None
+        self._stop_reason: Optional[StopNotification] = None
         self.last_message_sent: Optional[V2GTPMessage] = None
         self._started: bool = True
 
         logger.info("Starting a new communication session")
-        SessionStateMachine.__init__(self, start_state, comm_session)
 
-    async def start(self, timeout: float):
+    # Session abstractmethods impl
+    @property
+    def session_id(self) -> str:
+        return self._session_id
+
+    @session_id.setter
+    def session_id(self, id: str) -> None:
+        self._session_id = id
+
+    @property
+    def protocol(self) -> Protocol:
+        return self._protocol
+
+    @protocol.setter
+    def protocol(self, proto: Protocol) -> None:
+        self._protocol = proto
+
+    @property
+    def stop_reason(self) -> Optional[StopNotification]:
+        return self._stop_reason
+
+    @stop_reason.setter
+    def stop_reason(self, reason: Optional[StopNotification]) -> None:
+        if reason and not reason.peer_ip_address:
+            reason.peer_ip_address = self.writer.get_extra_info("peername")
+        self._stop_reason = reason
+
+    async def start(self, timeout: float) -> None:
         """
         Starts a EVCC / SECC communication session by spawning up the rcv_loop()
         method, that constantly waits a given amount of seconds to read data
@@ -363,16 +361,19 @@ class V2GCommunicationSession(SessionStateMachine):
         finally:
             self._started = False
 
+    # abstractmethodes for the derived classes
     @abstractmethod
-    def save_session_info(self):
+    def save_session_info(self) -> None:
         raise NotImplementedError
 
-    async def _update_state_info(self, state: State):
-        if hasattr(self.comm_session, "evse_controller"):
-            evse_controller = self.comm_session.evse_controller
-            await evse_controller.set_present_protocol_state(state)
+    @abstractmethod
+    async def on_stop(self, reason: str) -> None:
+        raise NotImplementedError
 
-    async def stop(self, reason: str, graceful: bool = True):
+    def _update_state_info(self, state: State) -> None:
+        logger.info(f"iso15118 state: {str(state)}")
+
+    async def stop(self, reason: str, graceful: bool = True) -> None:
         """
         Closes the TCP connection after 5 seconds and terminates or pauses the
         data link for this V2GCommunicationSession object after 2 seconds to
@@ -402,16 +403,8 @@ class V2GCommunicationSession(SessionStateMachine):
         logger.info(f"Reason: {reason}")
 
 
-        # Signal data link layer to either terminate or pause the data
-        # link connection
-        # ll9877 comment: basically all hasattr() should be an abstractmethod on_stop()
-        if hasattr(self.comm_session, "evse_controller"):
-            evse_controller = self.comm_session.evse_controller
-            await evse_controller.stop_charger()
-            await evse_controller.update_data_link(terminate_or_pause)
-            await evse_controller.session_ended(str(self.current_state), reason)
-        elif hasattr(self.comm_session, "ev_controller"):
-            await self.comm_session.ev_controller.enable_charging(False)
+        # Signal data link layer
+        await self.on_stop(reason)
         logger.info(f"{terminate_or_pause}d the data link")
         
         try:
@@ -424,7 +417,7 @@ class V2GCommunicationSession(SessionStateMachine):
             logger.info(str(exc))
         logger.info("TCP connection closed to peer with address " f"{self.peer_name}")
 
-    async def send(self, message: V2GTPMessage):
+    async def send(self, message: V2GTPMessage) -> None:
         """
         Sends a V2GTPMessage via the TCP socket and stores the last message sent
 
@@ -439,7 +432,7 @@ class V2GCommunicationSession(SessionStateMachine):
         self.last_message_sent = message
         logger.info(f"Sent {str(self.current_state.message)}, size={len(msg)}bytes")
 
-    async def rcv_loop(self, timeout: float):
+    async def rcv_loop(self, timeout: float) -> None:
         """
         A constant loop that implements the timeout for each message. Starts
         waiting for a specified time (see argument 'timeout') to read something
@@ -514,12 +507,13 @@ class V2GCommunicationSession(SessionStateMachine):
                     # next_v2gtp_msg would not be set only if the next state is either
                     # Terminate or Pause on the EVCC side
                     await self.send(self.current_state.next_v2gtp_msg)
-                    await self._update_state_info(self.current_state)
+                    logger.info(f"iso15118 state: {str(self.current_state)}")
 
                 if self.current_state.next_state in (Terminate, Pause):
-                    await self.stop(reason=self.comm_session.stop_reason.reason)
-                    self.comm_session.session_handler_queue.put_nowait(
-                        self.comm_session.stop_reason
+                    # self.stop_reason is already set
+                    await self.stop(reason=self.stop_reason.reason)
+                    self.session_handler_queue.put_nowait(
+                        self.stop_reason
                     )
                     return
 

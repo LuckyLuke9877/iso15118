@@ -91,7 +91,7 @@ class EVCCCommunicationSession(V2GCommunicationSession):
         # Session, so we dont need to do this self injection, since self
         # is already injected by default on a child
         V2GCommunicationSession.__init__(
-            self, transport, SupportedAppProtocol, session_handler_queue, self
+            self, transport, SupportedAppProtocol, session_handler_queue
         )
 
         self.config = evcc_config
@@ -256,6 +256,9 @@ class EVCCCommunicationSession(V2GCommunicationSession):
         # RESUME_SESSION_ID = self.session_id
         # RESUME_SELECTED_AUTH_OPTION = self.selected_auth_option
         # RESUME_REQUESTED_ENERGY_MODE = self.selected_energy_mode
+
+    async def on_stop(self, reason: str) -> None:
+            await self.ev_controller.enable_charging(False)
 
 
 class CommunicationSessionHandler:

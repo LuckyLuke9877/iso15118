@@ -1,7 +1,7 @@
 import base64
 import logging
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Optional, Type, Union
+from typing import Optional, Type, Union
 
 from pydantic import ValidationError
 
@@ -30,6 +30,7 @@ from iso15118.shared.messages.enums import (
     ISOV2PayloadTypes,
     ISOV20PayloadTypes,
     Namespace,
+    Protocol,
 )
 from iso15118.shared.messages.iso15118_2.body import Body, BodyBase
 from iso15118.shared.messages.iso15118_2.datatypes import FaultCode, Notification
@@ -40,21 +41,9 @@ from iso15118.shared.messages.iso15118_20.common_types import (
 )
 from iso15118.shared.messages.v2gtp import V2GTPMessage
 from iso15118.shared.messages.xmldsig import Signature
+from iso15118.shared.notifications import StopNotification
 
 logger = logging.getLogger(__name__)
-
-if TYPE_CHECKING:
-    # EVCCCommunicationSession and SECCCommunicationSession are used for
-    # annotation purposes only, as a type hint for the comm_session class
-    # attribute. But comm_session also imports State. To avoid a circular import
-    # error, one can use the TYPE_CHECKING boolean from typing, which evaluates
-    # to True during mypy or other 3rd party type checker but assumes the value
-    # 'False' during runtime.
-    # Please check:
-    # https://stackoverflow.com/questions/61545580/how-does-mypy-use-typing-type-checking-to-resolve-the-circular-import-annotation
-    # https://docs.python.org/3/library/typing.html#typing.TYPE_CHECKING
-    from iso15118.evcc.comm_session_handler import EVCCCommunicationSession
-    from iso15118.secc.comm_session_handler import SECCCommunicationSession
 
 
 class Base64:
@@ -70,8 +59,54 @@ class Base64:
         self.message_name = message_name
         self.namespace = namespace
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.message_name
+
+
+"""
+Session base interface
+These methodes must be implemented by session sub-classes.
+"""
+class Session(ABC):
+    @property
+    @abstractmethod
+    def current_state(self) -> "State":
+        raise NotImplementedError
+
+    @current_state.setter
+    @abstractmethod
+    def current_state(self, state: "State") -> None:
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def session_id(self) -> str:
+        raise NotImplementedError
+
+    @session_id.setter
+    @abstractmethod
+    def session_id(self, id: str) -> None:
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def protocol(self) -> Protocol:
+        raise NotImplementedError
+
+    @protocol.setter
+    @abstractmethod
+    def protocol(self, proto: Protocol) -> None:
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def stop_reason(self) -> Optional[StopNotification]:
+        raise NotImplementedError
+
+    @stop_reason.setter
+    @abstractmethod
+    def stop_reason(self, reason: Optional[StopNotification]) -> None:
+        raise NotImplementedError
 
 
 class State(ABC):
@@ -87,7 +122,7 @@ class State(ABC):
 
     def __init__(
         self,
-        comm_session: Union["EVCCCommunicationSession", "SECCCommunicationSession"],
+        comm_session: Session,
         timeout: Union[float, int] = 0,
     ):
         """
@@ -99,10 +134,7 @@ class State(ABC):
             timeout: The amount of seconds to wait for an incoming message to
                      process before raising a timeout
         """
-        self.comm_session: Union[
-            "EVCCCommunicationSession", "SECCCommunicationSession"
-        ] = comm_session
-        self.comm_session.current_state = self
+        self.comm_session: Session = comm_session
         # The amount of seconds to wait for an incoming message
         self.timeout: Union[float, int] = 0
         # The next state to transition to after processing the incoming message,
@@ -136,6 +168,8 @@ class State(ABC):
         # result of sending this next message
         self.next_msg_timeout: Union[float, int] = 0
 
+        # set this state as current state in session
+        self.comm_session.current_state = self
         logger.info(f"Entered state {str(self)}")
 
         if timeout > 0:
@@ -153,7 +187,7 @@ class State(ABC):
             V2GMessageDINSPEC,
         ],
         message_exi: bytes = None,
-    ):
+    ) -> None:
         """
         Every State must implement this method to process the incoming message,
         which is either a request message (SECC) or a response message (EVCC) of
@@ -192,7 +226,7 @@ class State(ABC):
             DINPayloadTypes, ISOV2PayloadTypes, ISOV20PayloadTypes
         ] = ISOV2PayloadTypes.EXI_ENCODED,
         signature: Signature = None,
-    ):
+    ) -> None:
         """
         Is called in case the processing of an incoming message was successful.
         Provides all the necessary information to create the next V2GTP
@@ -263,16 +297,17 @@ class State(ABC):
         ] = None
         if isinstance(next_msg, BodyBaseDINSPEC):
             note_dinspec: Union[NotificationDINSPEC, None] = None
+            stop_reason = self.comm_session.stop_reason
             if (
-                self.comm_session.stop_reason
-                and not self.comm_session.stop_reason.successful
+                stop_reason
+                and not stop_reason.successful
             ):
                 # The fault message must not be bigger than 64 characters according to
                 # the XSD data type description
-                if len(self.comm_session.stop_reason.reason) > 64:
-                    fault_msg = self.comm_session.stop_reason.reason[:62] + ".."
+                if len(stop_reason.reason) > 64:
+                    fault_msg = stop_reason.reason[:62] + ".."
                 else:
-                    fault_msg = self.comm_session.stop_reason.reason
+                    fault_msg = stop_reason.reason
                 note_dinspec = NotificationDINSPEC(
                     fault_code=FaultCodeDINSPEC.PARSING_ERROR, fault_msg=fault_msg
                 )
@@ -294,16 +329,17 @@ class State(ABC):
             self.message = to_be_exi_encoded
         elif isinstance(next_msg, BodyBase):
             note: Union[Notification, None] = None
+            stop_reason = self.comm_session.stop_reason
             if (
-                self.comm_session.stop_reason
-                and not self.comm_session.stop_reason.successful
+                stop_reason
+                and not stop_reason.successful
             ):
                 # The fault message must not be bigger than 64 characters according to
                 # the XSD data type description
-                if len(self.comm_session.stop_reason.reason) > 64:
-                    fault_msg = self.comm_session.stop_reason.reason[:62] + ".."
+                if len(stop_reason.reason) > 64:
+                    fault_msg = stop_reason.reason[:62] + ".."
                 else:
-                    fault_msg = self.comm_session.stop_reason.reason
+                    fault_msg = stop_reason.reason
                 note = Notification(
                     fault_code=FaultCode.PARSING_ERROR, fault_msg=fault_msg
                 )
@@ -341,12 +377,13 @@ class State(ABC):
             try:
                 exi_payload = EXI().to_exi(to_be_exi_encoded, namespace)
 
-                if hasattr(self.comm_session, "evse_id"):
-                    logger.trace(  # type: ignore[attr-defined]
-                        f"{self.comm_session.evse_id}:::"
-                        f"{exi_payload.hex()}:::"
-                        f"{namespace.value}"
-                    )
+                # feels hackish
+                # if hasattr(self.comm_session, "evse_id"):
+                #     logger.trace(  # type: ignore[attr-defined]
+                #         f"{self.comm_session.evse_id}:::"
+                #         f"{exi_payload.hex()}:::"
+                #         f"{namespace.value}"
+                #     )
             except EXIEncodingError as exc:
                 logger.error(f"{exc}")
                 self.next_state = Terminate
@@ -366,13 +403,13 @@ class State(ABC):
                 f"creating a V2GTPMessage. {exc}"
             )
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         """
         Returns the object representation in string format
         """
         return self.__str__()
 
-    def __str__(self):
+    def __str__(self) -> str:
         """
         Returns the name of the State
         """
@@ -382,7 +419,7 @@ class State(ABC):
 class Terminate(State):
     def __init__(
         self,
-        comm_session: Union["EVCCCommunicationSession", "SECCCommunicationSession"],
+        comm_session: Session,
     ):
         super().__init__(comm_session)
 
@@ -397,14 +434,14 @@ class Terminate(State):
             Base64,
         ],
         message_exi: bytes = None,
-    ):
+    ) -> None:
         pass
 
 
 class Pause(State):
     def __init__(
         self,
-        comm_session: Union["EVCCCommunicationSession", "SECCCommunicationSession"],
+        comm_session: Session,
     ):
         super().__init__(comm_session)
 
@@ -419,5 +456,5 @@ class Pause(State):
             Base64,
         ],
         message_exi: bytes = None,
-    ):
+    ) -> None:
         pass

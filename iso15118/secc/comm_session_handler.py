@@ -86,7 +86,7 @@ class SECCCommunicationSession(V2GCommunicationSession):
         from iso15118.secc.states.sap_states import SupportedAppProtocol
 
         V2GCommunicationSession.__init__(
-            self, transport, SupportedAppProtocol, session_handler_queue, self
+            self, transport, SupportedAppProtocol, session_handler_queue
         )
 
         self.config = config
@@ -141,6 +141,10 @@ class SECCCommunicationSession(V2GCommunicationSession):
     def save_session_info(self):
         # TODO make sure to not delete the comm session object
         pass
+
+    async def on_stop(self, reason: str) -> None:
+        await self.evse_controller.stop_charger()
+        await self.evse_controller.session_ended(str(self.current_state), reason)
 
     def _is_tls(self, transport: Tuple[StreamReader, StreamWriter]) -> bool:
         """
