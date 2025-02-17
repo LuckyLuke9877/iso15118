@@ -10,7 +10,7 @@ import gc
 import logging
 from abc import ABC, abstractmethod
 from asyncio.streams import StreamReader, StreamWriter
-from typing import List, Optional, Tuple, Type, Union
+from typing import List, Optional, Tuple, Type, Union, Any
 
 from pydantic import ValidationError
 
@@ -267,7 +267,7 @@ class V2GCommunicationSession(SessionStateMachine):
         self,
         transport: Tuple[StreamReader, StreamWriter],
         start_state: Type["State"],
-        session_handler_queue: asyncio.Queue,
+        session_handler_queue: asyncio.Queue[Any],
     ):
         """
         Initialise the communication session with EVCC or SECC specific
@@ -458,9 +458,7 @@ class V2GCommunicationSession(SessionStateMachine):
                 message = await asyncio.wait_for(self.reader.read(7000), timeout)
                 if message == b"" and self.reader.at_eof():
                     stop_reason: str = "TCP peer closed connection"
-                    self.stop_reason = StopNotification(False, stop_reason, self.peer_name)
-                    await self.stop(reason=stop_reason, graceful=False)
-                    self.session_handler_queue.put_nowait(self.stop_reason)
+                    await self.stop_session(False, False, stop_reason)
                     return
             except (asyncio.TimeoutError, ConnectionResetError) as exc:
                 if type(exc) is asyncio.TimeoutError:
@@ -480,10 +478,7 @@ class V2GCommunicationSession(SessionStateMachine):
                 else:
                     error_msg = f"{exc.__class__.__name__} occurred. {str(exc)}"
 
-                self.stop_reason = StopNotification(False, error_msg, self.peer_name)
-
-                await self.stop(reason=error_msg)
-                self.session_handler_queue.put_nowait(self.stop_reason)
+                await self.stop_session(False, True, error_msg)
                 return
             gc_enabled = gc.isenabled()
             try:
@@ -511,10 +506,7 @@ class V2GCommunicationSession(SessionStateMachine):
 
                 if self.current_state.next_state in (Terminate, Pause):
                     # self.stop_reason is already set
-                    await self.stop(reason=self.stop_reason.reason)
-                    self.session_handler_queue.put_nowait(
-                        self.stop_reason
-                    )
+                    await self.stop_session(False, True, self.stop_reason.reason)
                     return
 
                 timeout = self.current_state.next_msg_timeout
@@ -546,15 +538,15 @@ class V2GCommunicationSession(SessionStateMachine):
                     f"{additional_info}"
                 )
 
-                self.stop_reason = StopNotification(
-                    False,
-                    stop_reason,
-                    self.peer_name,
-                )
-
-                await self.stop(stop_reason)
-                self.session_handler_queue.put_nowait(self.stop_reason)
+                await self.stop_session(False, True, stop_reason)
                 return
             finally:
                 if gc_enabled:
                     gc.enable()
+
+    async def stop_session(self, successful: bool, graceful: bool, reason: str) -> None:
+        if not self.stop_reason or self.stop_reason.reason != reason:
+            self.stop_reason = StopNotification(successful, reason, self.peer_name)
+
+        await self.stop(reason, graceful)
+        self.session_handler_queue.put_nowait(self.stop_reason)
