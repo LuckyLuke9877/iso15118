@@ -128,7 +128,9 @@ class UDPServer(asyncio.DatagramProtocol):
 
     def stop(self) -> None:
         # results in a connection_lost()
-        self._transport.close()
+        if self._transport:
+            self._transport.close()
+            self._transport = None
 
     def connection_made(self, transport):
         """
