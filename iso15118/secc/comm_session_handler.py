@@ -324,6 +324,7 @@ class CommunicationSessionHandler:
                             await self.end_current_session(
                                 notification.peer_ip_address, notification.stop_action
                             )
+                        await self.evse_controller.set_status(ServiceStatus.STOPPED if notification.successful else ServiceStatus.ERROR)
                         # exit this task
                         return
                     except KeyError:

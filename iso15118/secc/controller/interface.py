@@ -92,9 +92,10 @@ class AuthorizationResponse:
 
 
 class ServiceStatus(str, Enum):
+    INIT = "initialized"
     READY = "ready"
     STARTING = "starting"
-    STOPPING = "stopping"
+    STOPPED = "stopped"
     ERROR = "error"
     BUSY = "busy"
 

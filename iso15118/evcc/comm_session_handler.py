@@ -561,14 +561,16 @@ class CommunicationSessionHandler:
                 elif isinstance(notification, StopNotification):
                     await cancel_task(self.comm_session[1])
                     del self.comm_session
-                    if notification.successful:
-                        break
-                    else:
-                        try:
-                            await self.restart_sdp(True)
-                        except SDPFailedError as exc:
-                            logger.exception(exc)
-                            # TODO not sure what else to do here
+                    # ll9877 comment: always stop here as it is something none udp/sdp related.
+                    break
+                    # if notification.successful:
+                    #     break
+                    # else:
+                    #     try:
+                    #         await self.restart_sdp(True)
+                    #     except SDPFailedError as exc:
+                    #         logger.exception(exc)
+                    #         # TODO not sure what else to do here
                 else:
                     logger.warning(
                         "Communication session handler received "
